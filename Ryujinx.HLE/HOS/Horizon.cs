@@ -9,7 +9,6 @@ using Ryujinx.Audio.Output;
 using Ryujinx.Audio.Renderer.Device;
 using Ryujinx.Audio.Renderer.Server;
 using Ryujinx.Common;
-using Ryujinx.Common.Logging;
 using Ryujinx.Configuration;
 using Ryujinx.HLE.FileSystem.Content;
 using Ryujinx.HLE.HOS.Font;
@@ -18,6 +17,7 @@ using Ryujinx.HLE.HOS.Kernel.Memory;
 using Ryujinx.HLE.HOS.Kernel.Process;
 using Ryujinx.HLE.HOS.Kernel.Threading;
 using Ryujinx.HLE.HOS.Services;
+using Ryujinx.HLE.HOS.Services.Account.Acc;
 using Ryujinx.HLE.HOS.Services.Am.AppletAE.AllSystemAppletProxiesService.SystemAppletProxy;
 using Ryujinx.HLE.HOS.Services.Apm;
 using Ryujinx.HLE.HOS.Services.Arp;
@@ -86,6 +86,7 @@ namespace Ryujinx.HLE.HOS
         internal KSharedMemory IirsSharedMem { get; private set; }
         internal SharedFontManager Font { get; private set; }
 
+        internal AccountManager AccountManager { get; private set; }
         internal ContentManager ContentManager { get; private set; }
         internal CaptureManager CaptureManager { get; private set; }
 
@@ -103,16 +104,20 @@ namespace Ryujinx.HLE.HOS
 
         public int GlobalAccessLogMode { get; set; }
 
-        internal ulong HidBaseAddress { get; private set; }
+        internal SharedMemoryStorage HidStorage { get; private set; }
 
         internal NvHostSyncpt HostSyncpoint { get; private set; }
 
         internal LibHac.Horizon LibHacHorizonServer { get; private set; }
         internal HorizonClient LibHacHorizonClient { get; private set; }
 
-        public Horizon(Switch device, ContentManager contentManager)
+        public Horizon(Switch device, ContentManager contentManager, AccountManager accountManager, MemoryConfiguration memoryConfiguration)
         {
-            KernelContext = new KernelContext(device, device.Memory);
+            KernelContext = new KernelContext(
+                device,
+                device.Memory,
+                memoryConfiguration.ToKernelMemorySize(),
+                memoryConfiguration.ToKernelMemoryArrange());
 
             Device = device;
 
@@ -124,43 +129,49 @@ namespace Ryujinx.HLE.HOS
 
             // Note: This is not really correct, but with HLE of services, the only memory
             // region used that is used is Application, so we can use the other ones for anything.
-            KMemoryRegionManager region = KernelContext.MemoryRegions[(int)MemoryRegion.NvServices];
+            KMemoryRegionManager region = KernelContext.MemoryManager.MemoryRegions[(int)MemoryRegion.NvServices];
 
             ulong hidPa  = region.Address;
             ulong fontPa = region.Address + HidSize;
             ulong iirsPa = region.Address + HidSize + FontSize;
             ulong timePa = region.Address + HidSize + FontSize + IirsSize;
 
-            HidBaseAddress = hidPa - DramMemoryMap.DramBase;
-
             KPageList hidPageList  = new KPageList();
             KPageList fontPageList = new KPageList();
             KPageList iirsPageList = new KPageList();
             KPageList timePageList = new KPageList();
 
-            hidPageList .AddRange(hidPa,  HidSize  / KMemoryManager.PageSize);
-            fontPageList.AddRange(fontPa, FontSize / KMemoryManager.PageSize);
-            iirsPageList.AddRange(iirsPa, IirsSize / KMemoryManager.PageSize);
-            timePageList.AddRange(timePa, TimeSize / KMemoryManager.PageSize);
+            hidPageList.AddRange(hidPa,  HidSize  / KPageTableBase.PageSize);
+            fontPageList.AddRange(fontPa, FontSize / KPageTableBase.PageSize);
+            iirsPageList.AddRange(iirsPa, IirsSize / KPageTableBase.PageSize);
+            timePageList.AddRange(timePa, TimeSize / KPageTableBase.PageSize);
 
-            HidSharedMem  = new KSharedMemory(KernelContext, hidPageList,  0, 0, KMemoryPermission.Read);
-            FontSharedMem = new KSharedMemory(KernelContext, fontPageList, 0, 0, KMemoryPermission.Read);
-            IirsSharedMem = new KSharedMemory(KernelContext, iirsPageList, 0, 0, KMemoryPermission.Read);
+            var hidStorage = new SharedMemoryStorage(KernelContext, hidPageList);
+            var fontStorage = new SharedMemoryStorage(KernelContext, fontPageList);
+            var iirsStorage = new SharedMemoryStorage(KernelContext, iirsPageList);
+            var timeStorage = new SharedMemoryStorage(KernelContext, timePageList);
 
-            KSharedMemory timeSharedMemory = new KSharedMemory(KernelContext, timePageList, 0, 0, KMemoryPermission.Read);
+            HidStorage = hidStorage;
 
-            TimeServiceManager.Instance.Initialize(device, this, timeSharedMemory, timePa - DramMemoryMap.DramBase, TimeSize);
+            HidSharedMem  = new KSharedMemory(KernelContext, hidStorage,  0, 0, KMemoryPermission.Read);
+            FontSharedMem = new KSharedMemory(KernelContext, fontStorage, 0, 0, KMemoryPermission.Read);
+            IirsSharedMem = new KSharedMemory(KernelContext, iirsStorage, 0, 0, KMemoryPermission.Read);
+
+            KSharedMemory timeSharedMemory = new KSharedMemory(KernelContext, timeStorage, 0, 0, KMemoryPermission.Read);
+
+            TimeServiceManager.Instance.Initialize(device, this, timeSharedMemory, timeStorage, TimeSize);
 
             AppletState = new AppletStateMgr(this);
 
             AppletState.SetFocus(true);
 
-            Font = new SharedFontManager(device, fontPa - DramMemoryMap.DramBase);
+            Font = new SharedFontManager(device, fontStorage);
 
             VsyncEvent = new KEvent(KernelContext);
 
             DisplayResolutionChangeEvent = new KEvent(KernelContext);
 
+            AccountManager = accountManager;
             ContentManager = contentManager;
             CaptureManager = new CaptureManager(device);
 
@@ -268,6 +279,7 @@ namespace Ryujinx.HLE.HOS
         public void InitializeServices()
         {
             IUserInterface sm = new IUserInterface(KernelContext);
+            sm.TrySetServer(new ServerBase(KernelContext, "SmServer", () => new IUserInterface(KernelContext)));
 
             // Wait until SM server thread is done with initialization,
             // only then doing connections to SM is safe.
@@ -321,9 +333,12 @@ namespace Ryujinx.HLE.HOS
 
                 // Reconfigure controllers
                 Device.Hid.RefreshInputConfig(ConfigurationState.Instance.Hid.InputConfig.Value);
-
-                Logger.Info?.Print(LogClass.Application, $"IsDocked toggled to: {State.DockedMode}");
             }
+        }
+
+        public void ReturnFocus()
+        {
+            AppletState.SetFocus(true);
         }
 
         public void SimulateWakeUpMessage()
@@ -394,6 +409,7 @@ namespace Ryujinx.HLE.HOS
                         foreach (KProcess process in KernelContext.Processes.Values.Where(x => x.Flags.HasFlag(ProcessCreationFlags.IsApplication)))
                         {
                             process.Terminate();
+                            process.DecrementReferenceCount();
                         }
 
                         // The application existed, now surface flinger can exit too.
@@ -404,7 +420,10 @@ namespace Ryujinx.HLE.HOS
                         foreach (KProcess process in KernelContext.Processes.Values.Where(x => !x.Flags.HasFlag(ProcessCreationFlags.IsApplication)))
                         {
                             process.Terminate();
+                            process.DecrementReferenceCount();
                         }
+
+                        KernelContext.Processes.Clear();
                     }
 
                     // Exit ourself now!

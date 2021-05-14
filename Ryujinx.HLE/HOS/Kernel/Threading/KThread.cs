@@ -49,7 +49,6 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
         private ulong _tlsAddress;
 
         public ulong TlsAddress => _tlsAddress;
-        public ulong TlsDramAddress { get; private set; }
 
         public KSynchronizationObject[] WaitSyncObjects { get; }
         public int[] WaitSyncHandles { get; }
@@ -159,9 +158,7 @@ namespace Ryujinx.HLE.HOS.Kernel.Threading
                     return KernelResult.OutOfMemory;
                 }
 
-                TlsDramAddress = owner.MemoryManager.GetDramAddressFromVa(_tlsAddress);
-
-                MemoryHelper.FillWithZeros(owner.CpuMemory, (long)_tlsAddress, KTlsPageInfo.TlsEntrySize);
+                MemoryHelper.FillWithZeros(owner.CpuMemory, _tlsAddress, KTlsPageInfo.TlsEntrySize);
             }
 
             bool is64Bits;

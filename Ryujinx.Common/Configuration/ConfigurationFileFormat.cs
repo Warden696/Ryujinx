@@ -14,9 +14,14 @@ namespace Ryujinx.Configuration
         /// <summary>
         /// The current version of the file format
         /// </summary>
-        public const int CurrentVersion = 22;
+        public const int CurrentVersion = 26;
 
         public int Version { get; set; }
+
+        /// <summary>
+        /// Enables or disables logging to a file on disk
+        /// </summary>
+        public bool EnableFileLog { get; set; }
 
         /// <summary>
         /// Resolution Scale. An integer scale applied to applicable render targets. Values 1-4, or -1 to use a custom floating point scale instead.
@@ -88,10 +93,6 @@ namespace Ryujinx.Configuration
         /// </summary>
         public GraphicsDebugLevel LoggingGraphicsDebugLevel { get; set; }
 
-        /// <summary>
-        /// Enables or disables logging to a file on disk
-        /// </summary>
-        public bool EnableFileLog { get; set; }
 
         /// <summary>
         /// Change System Language
@@ -174,6 +175,16 @@ namespace Ryujinx.Configuration
         public AudioBackend AudioBackend { get; set; }
 
         /// <summary>
+        /// The selected memory manager mode
+        /// </summary>
+        public MemoryManagerMode MemoryManagerMode { get; set; }
+
+        /// <summary>
+        /// Expands the RAM amount on the emulated system from 4GB to 6GB
+        /// </summary>
+        public bool ExpandRam { get; set; }
+
+        /// <summary>
         /// Enable or disable ignoring missing services
         /// </summary>
         public bool IgnoreMissingServices { get; set; }
@@ -219,14 +230,23 @@ namespace Ryujinx.Configuration
         public KeyboardHotkeys Hotkeys { get; set; }
 
         /// <summary>
-        /// Keyboard control bindings
+        /// Legacy keyboard control bindings
         /// </summary>
-        public List<KeyboardConfig> KeyboardConfig { get; set; }
+        /// <remarks>Kept for file format compatibility (to avoid possible failure when parsing configuration on old versions)</remarks>
+        /// TODO: Remove this when those older versions aren't in use anymore.
+        public List<object> KeyboardConfig { get; set; }
 
         /// <summary>
-        /// Controller control bindings
+        /// Legacy controller control bindings
         /// </summary>
-        public List<ControllerConfig> ControllerConfig { get; set; }
+        /// <remarks>Kept for file format compatibility (to avoid possible failure when parsing configuration on old versions)</remarks>
+        /// TODO: Remove this when those older versions aren't in use anymore.
+        public List<object> ControllerConfig { get; set; }
+
+        /// <summary>
+        /// Input configurations
+        /// </summary>
+        public List<InputConfig> InputConfig { get; set; }
 
         /// <summary>
         /// Loads a configuration file from disk
