@@ -98,7 +98,7 @@ namespace Ryujinx.Memory.Tracking
             {
                 RegionHandle handle = _handles[i];
 
-                if (handle.Dirty && sequenceNumber != handle.SequenceNumber)
+                if (sequenceNumber != handle.SequenceNumber && handle.DirtyOrVolatile())
                 {
                     rgSize += handle.Size;
                     handle.Reprotect();
@@ -131,6 +131,24 @@ namespace Ryujinx.Memory.Tracking
             for (int i = startHandle; i <= lastHandle; i++)
             {
                 _handles[i].RegisterAction(action);
+            }
+        }
+
+        /// <summary>
+        /// Force this handle to be dirty, without reprotecting. This will also remove the reprotect when the dirty flag is removed,
+        /// unless it is triggered by a tracked read or write.
+        /// </summary>
+        public void ForceDirty(ulong address, ulong size)
+        {
+            Dirty = true;
+
+            int startHandle = (int)((address - Address) / Granularity);
+            int lastHandle = (int)((address + (size - 1) - Address) / Granularity);
+
+            for (int i = startHandle; i <= lastHandle; i++)
+            {
+                _handles[i].SequenceNumber--;
+                _handles[i].ForceDirty();
             }
         }
 
